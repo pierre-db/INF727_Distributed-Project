@@ -274,7 +274,6 @@ def main():
             # if we have an error while creating we exit with an error
             sys.exit(1)
         
-
         # we loop on each file received in shufflesreceived/
         words_count = {}
         for f in os.listdir(curdir+'/shufflesreceived/'+hostname):

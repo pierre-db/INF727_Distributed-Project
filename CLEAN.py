@@ -9,12 +9,12 @@ USERNAME = 'dalbianco-20'
 WORKERS_FILE = 'machines.txt'
 
 # This function launches a sub process
-def launch_subprocess(username, machine):
+def launch_subprocess(machine):
     # simply create a sub process and return it
     if VERBOSE:
         print('{}: starting clean up ...'.format(machine))
     process = subprocess.Popen(                    
-                     ['ssh', '-q', username+'@'+machine,'rm -rf /tmp/'+username],
+                     ['ssh', '-q', USERNAME+'@'+machine,'rm -rf /tmp/'+USERNAME],
                     stdout=subprocess.PIPE, 
                     stderr=subprocess.PIPE,
                     stdin=subprocess.PIPE,
@@ -27,7 +27,7 @@ def execute_clean(worker):
     timeout = 15
     try:
         # execute the sub process on a remote machine with a certain timeout
-        process = launch_subprocess('dalbianco-20', worker)
+        process = launch_subprocess(worker)
         # try to get the process' outputs
         _, stderr = process.communicate(timeout=timeout)
         returncode = process.returncode

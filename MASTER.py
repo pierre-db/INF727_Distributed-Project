@@ -13,25 +13,26 @@ import DEPLOY as deploy
 # we define the username and workers filename as a global variable
 USERNAME = 'dalbianco-20'
 WORKERS_FILE = 'machines.txt'
+#MAXRETRY = 3
 
 # This function launches a sub process
-def launch_subprocess(username, worker, command, file=None):
+def launch_subprocess(worker, command, file=None):
     # the command to be executed, contains two commands: one to create the remote dir and one to copy the files
     if command == 'mkdir':
         # we're using the -q otpion for quiet mode
-        commands = ['ssh', '-q', username+'@'+worker,'mkdir -p /tmp/'+username+'/splits']
+        commands = ['ssh', '-q', USERNAME+'@'+worker,'mkdir -p /tmp/'+USERNAME+'/splits']
     elif command == 'scp_split':
-        commands = ['scp', '-qC', 'splits/'+file, username+'@'+worker+':/tmp/'+username+'/splits']
+        commands = ['scp', '-qC', 'splits/'+file, USERNAME+'@'+worker+':/tmp/'+USERNAME+'/splits']
     elif command == 'scp_workers':
-        commands = ['scp', '-qC', WORKERS_FILE, username+'@'+worker+':/tmp/'+username+'/machines.txt']
+        commands = ['scp', '-qC', WORKERS_FILE, USERNAME+'@'+worker+':/tmp/'+USERNAME+'/machines.txt']
     elif command == 'map':
-        commands = ['ssh','-q', username+'@'+worker, 'python3 /tmp/'+username+'/SLAVE.py 0 /tmp/'+username+'/splits/'+file]
+        commands = ['ssh','-q', USERNAME+'@'+worker, 'python3 /tmp/'+USERNAME+'/SLAVE.py 0 /tmp/'+USERNAME+'/splits/'+file]
     elif command == 'shuffle':
-        commands = ['ssh','-q', username+'@'+worker, 'python3 /tmp/'+username+'/SLAVE.py 1 /tmp/'+username+'/maps/'+file]
+        commands = ['ssh','-q', USERNAME+'@'+worker, 'python3 /tmp/'+USERNAME+'/SLAVE.py 1 /tmp/'+USERNAME+'/maps/'+file]
     elif command == 'reduce':
-        commands = ['ssh','-q', username+'@'+worker, 'python3 /tmp/'+username+'/SLAVE.py 2']
+        commands = ['ssh','-q', USERNAME+'@'+worker, 'python3 /tmp/'+USERNAME+'/SLAVE.py 2']
     elif command == 'fetch':
-        commands = ['scp', '-qC', username+'@'+worker+':/tmp/'+username+'/reduces/*', 'reduces/']
+        commands = ['scp', '-qC', USERNAME+'@'+worker+':/tmp/'+USERNAME+'/reduces/*', 'reduces/']
     
     # simply create a sub process and return it
     #print('{}: starting {} ...'.format(worker, command))
@@ -47,13 +48,13 @@ def launch_subprocess(username, worker, command, file=None):
 # Executes a command on a worker and checks that it worked
 def execute_command(worker, command, file=None):
     if command == 'mkdir':
-        timeout = 10
+        timeout = None
     else:
         timeout = None
 
     try:
         # execute the sub process on a remote machine with a certain timeout
-        process = launch_subprocess(USERNAME, worker, command, file)
+        process = launch_subprocess(worker, command, file)
         # try to get the process' outputs
         stdout, stderr = process.communicate(timeout=timeout)
         returncode = process.returncode
@@ -313,12 +314,22 @@ def main():
     # the pool of processes executes the subprocess on remote machines
     workers_status = pool.map(launch_shuffle, zip(workers, split_files))
 
+    # to retry the suffle MAXRETRY times in case of a failure
+    # for _ in range(MAXRETRY):
+    #     if not all(workers_status):
+    #         # we generate a list of the failed workers
+    #         failed_workers = [w for w, s in zip(workers, workers_status) if not s]
+    #         failed_files = [w for w, s in zip(split_files, workers_status) if not s]
+
+    #         # we print a message explaining what has been done
+    #         print('Failed shuffle on {}'.format(failed_workers))
+    #         print('Retrying ...')
+
+    #         workers_status = pool.map(launch_shuffle, zip(failed_workers, failed_files))
+    
     # if we have some failures
     if not all(workers_status):
-        # we generate a list of the failed workers
         failed_workers = [w for w, s in zip(workers, workers_status) if not s]
-        
-        # we print a message explaining what has been done
         print('Failed shuffle on {}'.format(failed_workers))
         sys.exit(1)
 

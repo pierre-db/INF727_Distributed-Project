@@ -8,13 +8,13 @@ USERNAME = 'dalbianco-20'
 WORKERS_FILE = 'machines.txt'
 
 # This function launches a sub process
-def launch_subprocess(username, machine, command):
+def launch_subprocess(machine, command):
     # the command to be executed, contains two commands: one to create the remote dir and one to copy the files
     if command == 'mkdir':
         # we're using the -q otpion for quiet mode
-        commands = ['ssh', '-q', username+'@'+machine,'mkdir -p /tmp/'+username]
+        commands = ['ssh', '-q', USERNAME+'@'+machine,'mkdir -p /tmp/'+USERNAME]
     elif command == 'scp':
-        commands = ['scp', '-q', 'SLAVE.py', username+'@'+machine+':/tmp/'+username]
+        commands = ['scp', '-qC', 'SLAVE.py', USERNAME+'@'+machine+':/tmp/'+USERNAME]
     # simply create a sub process and return it
     if VERBOSE:
         print('{}: starting {} ...'.format(machine, command))
@@ -32,7 +32,7 @@ def execute_command(worker, command):
     timeout = 10
     try:
         # execute the sub process on a remote machine with a certain timeout
-        process = launch_subprocess(USERNAME, worker, command)
+        process = launch_subprocess(worker, command)
         # try to get the process' outputs
         stdout, stderr = process.communicate(timeout=timeout)
         returncode = process.returncode

@@ -2,23 +2,24 @@ import sys
 import re
 import os
 import hashlib
+import time
 import subprocess
 import multiprocessing
 
-# we define the fefault hostname and the workers filename as a global variable
+# we define the a few global variables for constant values
 DEFAULTHOST = 'tp-4b01-@@'
 WORKERS_FILE = 'machines.txt'
 USERNAME = 'dalbianco-20'
-MAXRETRY = 3
+MAXRETRY = 5
 
 # This function launches a sub process
-def launch_subprocess(username, worker, command):
+def launch_subprocess(worker, command, hostname=None):
     # the command to be executed, contains two commands: one to create the remote dir and one to copy the files
     if command == 'mkdir':
         # we're using the -q otpion for quiet mode
-        commands = ['ssh', '-q', username+'@'+worker,'mkdir -p /tmp/'+username+'/shufflesreceived']
+        commands = ['ssh', '-q', USERNAME+'@'+worker,'mkdir -p /tmp/'+USERNAME+'/shufflesreceived']
     elif command == 'scp':
-        commands = ['scp', '-qrC', '/tmp/'+username+'/shuffles/'+worker, username+'@'+worker+':/tmp/'+username+'/shufflesreceived/']
+        commands = ['scp', '-qC', '/tmp/'+USERNAME+'/shuffles/'+worker+'-'+hostname+'.txt', USERNAME+'@'+worker+':/tmp/'+USERNAME+'/shufflesreceived/']
 
     # simply create a sub process and return it
     #print('{}: starting {} ...'.format(worker, command))
@@ -32,15 +33,15 @@ def launch_subprocess(username, worker, command):
     return process
 
 # Executes a command on a worker and checks that it worked
-def execute_command(worker, command):
+def execute_command(worker, command, hostname=None):
     # we need a long timeout for the scp of the shuffles
     if command == 'scp':
         timeout = None
     else:
-        timeout = 10
+        timeout = None
     try:
         # execute the sub process on a remote machine with a certain timeout
-        process = launch_subprocess(USERNAME, worker, command)
+        process = launch_subprocess(worker, command, hostname)
         # try to get the process' outputs
         stdout, stderr = process.communicate(timeout=timeout)
         returncode = process.returncode
@@ -102,8 +103,8 @@ def get_shuffles(filename, workers, nb_workers, curdir, hostname):
                 # with open(curdir+'/shuffles/'+workers[modulo]+'/'+hash+'-'+hostname+'.txt', 'a') as f:
                 #     f.writelines(line)
 
-                # we write the content in a file in shuffles/<worker>/<hostname>.txt
-                with open(curdir+'/shuffles/'+workers[modulo]+'/'+hostname+'.txt', 'a') as f:
+                # we write the content in a file in shuffles/<worker>-<hostname>.txt
+                with open(curdir+'/shuffles/'+workers[modulo]+'-'+hostname+'.txt', 'a') as f:
                     f.writelines(line)
     
     except Exception:
@@ -112,15 +113,24 @@ def get_shuffles(filename, workers, nb_workers, curdir, hostname):
     return True
 
 # Tries to execute commands on workers
-def send_shuffle(worker):
-    mkdir_returncode = execute_command(worker, 'mkdir')
-    if mkdir_returncode == 0:
-        for _ in range(MAXRETRY):
-            scp_s_returncode = execute_command(worker, 'scp')
+def send_shuffle(worker_hostname_curdir):
+    worker, (hostname, curdir) = worker_hostname_curdir
+    # we check if there is a file for this worker, if not, we do nothing
+    if(not os.path.exists(curdir+'/shuffles/'+worker+'-'+hostname+'.txt')):
+        return True
+    
+    # we execute this MAXRETRY times or until we succeed
+    for i in range(MAXRETRY):
+        mkdir_returncode = execute_command(worker, 'mkdir')
+        if mkdir_returncode == 0:
+            scp_s_returncode = execute_command(worker, 'scp', hostname)
             if scp_s_returncode == 0:
                 print('{}: \033[92mjob done\033[0m'.format(worker))
                 #the job is successful
                 return True
+        
+        # we wait 
+        time.sleep(0.2*(i+1))
     
     # the job failed
     return False
@@ -149,7 +159,7 @@ def generate_hash(s):
 
 def make_dir(dirname):
     try:
-        os.makedirs(dirname)
+        os.makedirs(dirname, exist_ok=True)
     except FileExistsError:
         pass
     except OSError:
@@ -195,7 +205,6 @@ def main():
     # we get our current working directory
     curdir = os.path.dirname(sys.argv[0])
 
-
     # if the current directory is empty, we replace it by '.' to avoid issues later
     if curdir == '':
         curdir = '.'
@@ -237,22 +246,23 @@ def main():
         if not make_dir(curdir+'/shuffles'):
             # if we have an error while creating we exit with an error
             sys.exit(1)
-            
-        for worker in workers:
-            if not make_dir(curdir+'/shuffles/'+worker):
-                # if we have an error while creating we exit with an error
-                sys.exit(1)
+        
+        # to create a directory per worker
+        # for worker in workers:
+        #     if not make_dir(curdir+'/shuffles/'+worker):
+        #         # if we have an error while creating we exit with an error
+        #         sys.exit(1)
 
         shuffle_done = get_shuffles(file, workers, nb_workers, curdir, hostname)
         # we couldn't open the file
         if not shuffle_done:
             print('Couldn\'t open file: {}'.format(file), file=sys.stderr)
-            sys.exit(1)
+            sys.exit(2)
         
         # we generate a list of tuples (worker, filename) that attributes a worker to each filename
         pool = multiprocessing.Pool(nb_workers)
         # we determine which worker we need to send the file to
-        workers_status = pool.map(send_shuffle, workers)
+        workers_status = pool.map(send_shuffle, zip(workers, [(hostname,curdir)]*nb_workers))
         # if we have some failures
         if not all(workers_status):
             # we generate a list of the failed workers
@@ -260,7 +270,7 @@ def main():
         
             # we print a message detailing which machines failed
             print('Failed shuffle transfer to {}'.format(failed_workers), file=sys.stderr)
-            sys.exit(1)
+            sys.exit(3)
 
     ###
     # option 2: reduce
@@ -276,8 +286,8 @@ def main():
         
         # we loop on each file received in shufflesreceived/
         words_count = {}
-        for f in os.listdir(curdir+'/shufflesreceived/'+hostname):
-            file = curdir+'/shufflesreceived/'+hostname+'/'+f
+        for f in os.listdir(curdir+'/shufflesreceived/'):
+            file = curdir+'/shufflesreceived/'+f
             #hash = f.split('-')[0]
 
             reduce_done = get_reduces(file, words_count)

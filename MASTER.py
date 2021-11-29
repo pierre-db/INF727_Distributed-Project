@@ -265,6 +265,10 @@ def main():
     # we read our list of workers
     workers = read_workers(WORKERS_FILE)
 
+    if len(workers) == 0:
+        print('No workers listed can\'t do anything')
+        sys.exit(0)
+
 
     ###
     # SPLIT

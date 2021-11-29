@@ -82,20 +82,27 @@ def clean(verbose=False):
     ###
     # Clean master
     ###
-    # we clean the local splits folder
-    if os.path.exists('splits'):
-        for f in os.listdir('splits'):
-            os.remove('splits/'+f)
-        os.rmdir('splits')
+    # we get our current working directory
+    curdir = os.path.dirname(sys.argv[0])
+
+    # if the current directory is empty, we replace it by '.' to avoid issues later
+    if curdir == '':
+        curdir = '.'
+
+    # we clean our local files
+    if os.path.exists(curdir+'/splits'):
+        for f in os.listdir(curdir+'/splits'):
+            os.remove(curdir+'/splits/'+f)
+        os.rmdir(curdir+'/splits')
 
     # we also clean the local reduces folder
-    if os.path.exists('reduces'):
-        for f in os.listdir('reduces'):
-            os.remove('reduces/'+f)
-        os.rmdir('reduces')
+    if os.path.exists(curdir+'/reduces'):
+        for f in os.listdir(curdir+'/reduces'):
+            os.remove(curdir+'/reduces/'+f)
+        os.rmdir(curdir+'/reduces')
     
-    else:
-        print('\033[92mCLEAN FINISHED\033[0m')
+
+    print('\033[92mCLEAN FINISHED\033[0m')
 
 
 if __name__ == '__main__':

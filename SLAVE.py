@@ -88,6 +88,7 @@ def get_maps(filename):
 
 # the words shuffle function
 def get_shuffles(filename, workers, nb_workers, curdir, hostname):
+    shuffles = {}
     try:
         # we read the content of the file created during the map
         with open(filename, 'r') as f:
@@ -104,12 +105,24 @@ def get_shuffles(filename, workers, nb_workers, curdir, hostname):
                 #     f.writelines(line)
 
                 # we write the content in a file in shuffles/<worker>-<hostname>.txt
-                with open(curdir+'/shuffles/'+workers[modulo]+'-'+hostname+'.txt', 'a') as f:
-                    f.writelines(line)
-    
+                # with open(curdir+'/shuffles/'+workers[modulo]+'-'+hostname+'.txt', 'a') as f:
+                #     f.writelines(line)
+                
+                if modulo in shuffles:
+                    shuffles[modulo].append(line)
+                else:
+                    shuffles[modulo] = [line]
+        
     except Exception:
         return False
-    
+
+    for modulo in shuffles:
+        # we write the shuffles in a file in shuffles/<worker>-<hostname>.txt
+        try:
+            with open(curdir+'/shuffles/'+workers[modulo]+'-'+hostname+'.txt', 'a') as f:
+                f.writelines(shuffles[modulo])
+        except Exception:
+            return False
     return True
 
 # Tries to execute commands on workers
@@ -297,10 +310,12 @@ def main():
                 sys.exit(1)
         
         # we write our words count into a file in /reduces
-        for w, c in words_count.items():
-            with open(curdir+'/reduces/'+hostname+'.txt', 'a') as f:
-                f.writelines('{} {}\n'.format(w, c))
+        # for w, c in words_count.items():
+        #     with open(curdir+'/reduces/'+hostname+'.txt', 'a') as f:
+        #         f.writelines('{} {}\n'.format(w, c))
 
+        with open(curdir+'/reduces/'+hostname+'.txt', 'w') as f:
+            f.writelines(map(lambda wc: '{} {}\n'.format(wc[0], wc[1]), words_count.items()))
         # # code to create one hash.txt per word
         # for (w,h), c in words_count.items():
         #     # we write the content in a file <hash>.txt in reduces/

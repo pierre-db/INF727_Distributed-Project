@@ -185,7 +185,7 @@ def perform_split(filename, workers):
             while block:
                 # we keep reading until we find a space
                 char = block[-1]
-                while char not in (' ', '\n'):
+                while char not in (' ', '\n', '\r', '\t'):
                     # we add the char to the current block
                     char = f.read(1)
                     block += char

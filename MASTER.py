@@ -48,7 +48,7 @@ def launch_subprocess(worker, command, file=None):
 # Executes a command on a worker and checks that it worked
 def execute_command(worker, command, file=None):
     if command == 'mkdir':
-        timeout = None
+        timeout = 15
     else:
         timeout = None
 

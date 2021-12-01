@@ -38,7 +38,8 @@ def execute_command(worker, command, hostname=None):
     if command == 'scp':
         timeout = None
     else:
-        timeout = None
+    # we can have a shorter timeout for mkdir commands
+        timeout = 15
     try:
         # execute the sub process on a remote machine with a certain timeout
         process = launch_subprocess(worker, command, hostname)
@@ -100,14 +101,17 @@ def get_shuffles(filename, workers, nb_workers, curdir, hostname):
                 # we perform attribution per machine using the hash
                 modulo = int(hash) % nb_workers
                 
-                # # we write the content in a file in shuffles/<worker>/<hash>-<hostname>.txt
+                # first version
+                # we write the content in a file in shuffles/<worker>/<hash>-<hostname>.txt
                 # with open(curdir+'/shuffles/'+workers[modulo]+'/'+hash+'-'+hostname+'.txt', 'a') as f:
                 #     f.writelines(line)
 
+                # second version: we write one file per worker
                 # we write the content in a file in shuffles/<worker>-<hostname>.txt
                 # with open(curdir+'/shuffles/'+workers[modulo]+'-'+hostname+'.txt', 'a') as f:
                 #     f.writelines(line)
                 
+                # final version: we write everything in RAM first
                 if modulo in shuffles:
                     shuffles[modulo].append(line)
                 else:
@@ -116,6 +120,7 @@ def get_shuffles(filename, workers, nb_workers, curdir, hostname):
     except Exception:
         return False
 
+    # final version: we copy the results from RAM to a file per worker in one shot
     for modulo in shuffles:
         # we write the shuffles in a file in shuffles/<worker>-<hostname>.txt
         try:
@@ -132,8 +137,10 @@ def send_shuffle(worker_hostname_curdir):
     if(not os.path.exists(curdir+'/shuffles/'+worker+'-'+hostname+'.txt')):
         return True
     
-    # we execute this MAXRETRY times or until we succeed
-    for i in range(MAXRETRY):
+    # we execute this 100*MAXRETRY times at most,
+    # MAXRETRY times in case of scp error code other than 1
+    retry_nb = 0
+    for retry_nb in range(MAXRETRY*100):
         mkdir_returncode = execute_command(worker, 'mkdir')
         if mkdir_returncode == 0:
             scp_s_returncode = execute_command(worker, 'scp', hostname)
@@ -141,10 +148,13 @@ def send_shuffle(worker_hostname_curdir):
                 print('{}: \033[92mjob done\033[0m'.format(worker))
                 #the job is successful
                 return True
+            # we had an unexpected error code
+            if scp_s_returncode != 1 and retry_nb > MAXRETRY:
+                break
         
-        # we wait 
-        time.sleep(0.2*(i+1))
-    
+        # we wait 200ms
+        time.sleep(0.2)
+
     # the job failed
     return False
 
@@ -260,7 +270,7 @@ def main():
             # if we have an error while creating we exit with an error
             sys.exit(1)
         
-        # to create a directory per worker
+        # to create a directory per worker necessary for the previous versions
         # for worker in workers:
         #     if not make_dir(curdir+'/shuffles/'+worker):
         #         # if we have an error while creating we exit with an error
@@ -309,18 +319,21 @@ def main():
                 print('Couldn\'t open file: {}'.format(file), file=sys.stderr)
                 sys.exit(1)
         
+        # Initial code to create one hash.txt per word
+        # for (w,h), c in words_count.items():
+        #     # we write the content in a file <hash>.txt in reduces/
+        #     with open(curdir+'/reduces/'+h+'.txt', 'w') as f:
+        #         f.writelines('{} {}\n'.format(w, c))
+
+        # first improvement : we write line by line
         # we write our words count into a file in /reduces
         # for w, c in words_count.items():
         #     with open(curdir+'/reduces/'+hostname+'.txt', 'a') as f:
         #         f.writelines('{} {}\n'.format(w, c))
 
+        # final version : we write the reduce file in one shot
         with open(curdir+'/reduces/'+hostname+'.txt', 'w') as f:
             f.writelines(map(lambda wc: '{} {}\n'.format(wc[0], wc[1]), words_count.items()))
-        # # code to create one hash.txt per word
-        # for (w,h), c in words_count.items():
-        #     # we write the content in a file <hash>.txt in reduces/
-        #     with open(curdir+'/reduces/'+h+'.txt', 'w') as f:
-        #         f.writelines('{} {}\n'.format(w, c))
 
 if __name__ == '__main__':
     main()  

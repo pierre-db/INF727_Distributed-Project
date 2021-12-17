@@ -9,7 +9,7 @@
 \usepackage[T1]{fontenc}
 \usepackage{helvet} %lmodern
 \usepackage{graphicx}
-\usepackage{hyperref}
+\usepackage[hidelinks]{hyperref}
 \renewcommand{\familydefault}{\sfdefault}
 
 \graphicspath{ {./images/} }
@@ -25,21 +25,28 @@
 
 L'ensemble du code pour ce projet est disponible sur GitHub à l'adresse suivante : \url{https://github.com/pierre-db/INF727_Distributed-Project}.
 
-\section{Split}
-La difficulté pricinpale sur cette étape a été de découper et répartir le ficher sur lequel on souhaite faite le word count entre les workers. Une première approche pourrait être de charger tout le fichier en RAM sous forme d'un \texttt{string} avec \texttt{file.read()}, d'en déduire le nombre de caractères avec la fonction \texttt{len()} et de travailler sur les indices du \texttt{string} pour écrire chaque morceaux dans un fichier séparé. Pour des fichiers de grosse taille, cette approche peut être problématique.
+\section*{Introduction}
+Pour ce projet nous allons coder un programme de comptage de mots en MapReduce. Nous allons essayer de comprendre les limitations de la méthode telle qu'elle a été décrite par Google en 2004 ainsi que les optimisations que nous pourrons effectuer dans notre cas spécifique. Il sera de plus intéressant de comparer les temps d'execution par rapport à un comptage de mots séquenciel ainsi que d'observer l'évolution du temps d'execution d'une tâche en fonction du nombre de workers, puisque nous disposons grace aux machines de l'école de machines aux caractèristiques techniques plus ou moins équivalentes entre elles. Il sera notamment intéressant de comparer nos résultats à la loi d'Amdahl.
 
-L'approche privilégiée a été de lire la taille du fichier en octets avec la fonction \texttt{os.path.getsize (filename)}. On peut ensuite découper le fichier en n (n = nombre de workers) blocks de taille = taille du fichier / nombre de workers. On peut alors lire le fichier par block de taille constante et écrire ces blocks dans des fichiers séparer. Une petite astuce pour éviter de découper un mot est de lire le dernier caractère de chaque block et d'ajouter au block en cours tous les caractères qui suivent jusqu'à ce qu'on tombe sur un espace ou une nouvelle ligne. Un limite de cette approche est que la taille du fichier en octet n'est pas nécessairement égale au nombre de caractères dans le fichier. La taille des caractères encodés en UTF-8 font eu moins un octet mais peut aussi faire plus dans le cas d'un caractère non latin. Cette méthode a donc tendance à sur estimer la taille des blocks. On peut donc se retrouver avec le dernier fichier du split vide. On considèrera cependant ici que le gain de temps et d'utilisation de RAM sont suffisants pour justifier ce compromis.
+L'ensemble du code (qui est disponible sur \href{https://github.com/pierre-db/INF727_Distributed-Project}{GitHub}) a été executé sur les machines de l'école, y compris le code pour le master afin d'utiliser un parc de machines cohérent et de réduire les temps de communications réseau entre machines. La liste exhaustive des machines utilisées est disponible dans le fichier \texttt{machines.txt}, la première machine de cette liste a été utilisée comme master.
+
+Dans la suite de ce document nous allons revenir sur les difficultés et les optimisations que nous pouvons faire pour chacune des étapes de base d'une opération MapReduce : Split $\rightarrow$ Map $\rightarrow$ Shuffle $\rightarrow$ Reduce, ainsi que l'étape de récupération des résultats par le master ici désignée par le terme Fetch.
+
+\section{Split}
+La difficulté pricinpale sur cette étape a été de découper et répartir le ficher sur lequel on souhaite faite le word count entre les workers. Une première approche pourrait être de charger tout le fichier en RAM sous forme d'un \texttt{string} avec \texttt{file.read()}, d'en déduire le nombre de caractères avec la fonction \texttt{len()} et de travailler sur les indices du \texttt{string} pour écrire chaque morceau dans un fichier séparé. Pour des fichiers de grosse taille, cette approche peut être problématique.
+
+L'approche privilégiée a été de lire la taille du fichier en octets avec la fonction \texttt{os.path.getsize (filename)}. On peut ensuite découper le fichier en n (n = nombre de workers) blocks de taille = taille du fichier / nombre de workers. On peut alors lire le fichier par block de taille constante et écrire ces blocks dans des fichiers séparés. Une petite astuce pour éviter de découper un mot est de lire le dernier caractère de chaque block et d'ajouter au block en cours tous les caractères qui suivent jusqu'à ce qu'on tombe sur un espace ou une nouvelle ligne. Une limite de cette approche est que la taille du fichier en octets n'est pas nécessairement égale au nombre de caractères dans le fichier. Les caractères encodés en UTF-8 font eu moins un octet mais peuvent aussi faire plus dans le cas d'un caractère non latin. Cette méthode a donc tendance à surestimer la taille des blocks. On peut donc se retrouver avec le dernier fichier du split vide. On considèrera cependant ici que le gain de temps et d'utilisation de RAM sont suffisants pour justifier ce compromis.
 
 \section{Map}
-Cette étape est assez directe, il s'agit d'envoyer les splits vers les workers puis de découper chaque fichier ligne du split au niveau des caractères blancs (*white space caracters*). On écrit ensuite chaque mot dans un fichier.
+Cette étape est assez directe, il s'agit d'envoyer les splits vers les workers puis de découper chaque ligne du split au niveau des caractères blancs (*white space caracters*). On écrit ensuite chaque mot dans un fichier.
 
-Le plus long à cette étape est l'envoi des splits. La partie \textit{Accélerer les transferts scp} décrit comment les temps de transferts scp ont été améliorés.
+Le plus long à cette étape est l'envoi des splits. La partie \textit{Accélerer les transferts scp} décrit comment les temps de transferts scp ont été (légèrement) améliorés.
 
 \section{Shuffle}
 \subsection*{Accélerer le shuffle}
 Pour le shuffle l'implémentation initiale créait un fichier par hash (i.e. par mot) et par worker. Cela génèrait une quantité importante de petits fichiers qui doivent ensuite être écrits sur disque, transférés entre les workers et lus. Cela posait problème pour deux raisons : les transferts entre machines, et les temps d'écriture sur disque.
 
-Lors des transferts entre machines, l'algorithme initial générait la liste de fichiers à envoyer à chaque machine et passait la liste de fichiers en argument à la commande scp. Cela évitait de faire une commande scp par fichier, mais génerait un nombre trop important d'arguments. Avec le fichier \verb|sante_publique.txt| de 18.3 MB et 3 workers, le programme générait un peu plus de 9000 arguments (1 argument = 1 fichier) à chaque commande scp. Cela produisait une erreur du fait que le nombre maximum d'arguments était dépassé et la commande scp échouait. Une première amélioration consiste à mettre tous les fichiers destinés à une machine dans un même répertoire, puis de simplement passer le nom du répertoire en argument à scp. 
+Lors des transferts entre machines, le programme initial générait la liste de fichiers à envoyer à chaque machine et passait la liste de fichiers en argument à la commande scp. Cela évitait de faire une commande scp par fichier, mais génerait un nombre trop important d'arguments. Avec le fichier \verb|sante_publique.txt| de 18.3 MB et 3 workers, le programme générait un peu plus de 9000 arguments (1 argument = 1 fichier) à chaque commande scp. Cela produisait une erreur du fait que le nombre maximum d'arguments était dépassé et la commande scp échouait. Une première amélioration a consisté à mettre tous les fichiers destinés à une machine dans un même répertoire, puis de simplement passer le nom du répertoire en argument à scp. 
 
 Les temps de lectures et d'écritures séquenciels étant assez élevés, l'approche qui consiste à génerer un fichier par mot n'est pas optimale et génère beaucoup de latence. Sur le fichier \texttt{sante\_publique.txt} de 18.3 MB avec 3 workers, le shuffle prennait 35s.
 
@@ -53,7 +60,7 @@ La solution a été de créer un fichier par machine qui contient pour chaque ma
 
 \includegraphics[width=5cm]{screenshot_shuffle3.png}
 
-Sur le fichier de 398.8 MB, le shuffle parvient maintenant à terme et prend 7 min 10s avec 3 workers.
+Sur le fichier de 398.8 MB, le shuffle parvient alors à terme et prend 7 min 10s avec 3 workers.
 
 \includegraphics[width=5cm]{screenshot_shuffle4.png}
 
@@ -72,7 +79,7 @@ Le code initial créait un fichier de la forme \texttt{<hash>.txt} par mot au mo
 
 \includegraphics[width=5cm]{screenshot_reduce1.png}
 
-L'amélioration consiste ici à écrire tous les mots et leur compte respectif issus du reduce dans un seul fichier par worker. Dans un premier temps les écritures sur disque sont faites lignes par ligne. Le master récupère ensuite ces fichiers via scp, et récupère ensuite toutes les lignes de chaque fichier. On passe d'un fichier par mot à un fichier par worker. Sur le fichier \texttt{sante\_publique.txt} avec 3 workers, l'étape de récupération et de concaténation deviens alors quasi instantanée (< 1 sec).
+L'amélioration consiste ici à écrire tous les mots et leur compte respectif issus du reduce dans un seul fichier par worker. Dans un premier temps les écritures sur disque sont faites ligne par ligne. Le master récupère ensuite ces fichiers via scp, et récupère ensuite toutes les lignes de chaque fichier. On passe d'un fichier par mot à un fichier par worker. Sur le fichier \texttt{sante\_publique.txt} avec 3 workers, l'étape de récupération et de concaténation deviens alors quasi instantanée (< 1 sec).
 
 \includegraphics[width=5cm]{screenshot_reduce2.png}
 
@@ -97,24 +104,24 @@ Après cette l'ajout de l'option \texttt{-C}, les temps des différentes étapes
 On constate que cette optimisation, n'améliore pas ou très peu la performance globale du MapReduce.
 
 \subsection*{Gestion des pannes}
-Une première amélioration consiste à vérifier le bon fonctionnement de chaque worker avant de lancer le map. Si un worker n'est pas disponible, nous découpons le fichier à mapper en un nombre incorrect de splits et nous répartirons mal nos maps. Pour éviter ce genre de probléme, le DEPLOY a été programmé pour commenter automatiquement les workers sur lesquels le deploiement a échoué (les lignes commençant par un caraclère \# dans le fichier \texttt{machines.txt} sont ignorées). Le script MASTER appelle automatiquement le script DEPLOY en début de programme. En effectuant l'étape DEPLOY puis MASTER on s'assure que la liste de workers est à jour au moment où on lance le MASTER et que celui-ci ne tombera pas dans un cas où un de ses workers ne fonctionne pas (du moins on minimise ce risque).
+Une première amélioration consiste à vérifier le bon fonctionnement de chaque worker avant de lancer le map. Si un worker n'est pas disponible, nous découpons le fichier à mapper en un nombre incorrect de splits et nous répartirons mal nos maps. Pour éviter ce genre de problèmes, le DEPLOY a été programmé pour commenter automatiquement les workers sur lesquels le deploiement a échoué (les lignes commençant par un caraclère \# dans le fichier \texttt{machines.txt} sont ignorées). Le script MASTER appelle automatiquement le script DEPLOY en début de programme. En effectuant l'étape DEPLOY puis MASTER on s'assure que la liste de workers est à jour au moment où on lance le MASTER et que celui-ci ne tombera pas dans un cas où un de ses workers ne fonctionne pas (du moins on minimise ce risque).
 
 Afin de détecter rapidement des anomalies, des timeout ont été rajoutées lors de l'execution des commandes mkdir en ssh. Il n'y a cependant pas de timeout sur les commandes scp (entre master et workers et entre workers seulement) pour pouvoir gérer des temps de transferts potentiellement longs.
 
-Au moment de l'envoie des shuffles entre les workers, chaque slave effectuait au départ jusqu'à 5 tentatives en cas d'échec (configurable via une variable globale). Dans ces conditions, l'étape de shuffle échouait quasi systématiquement sur le fichier de 18.3 MB lorsque le nombre de workers excédait les 20/25. Il semblait y avoir un problème lors de l'envoie des shuffles entre workers avec scp, lorsque trop de machines tentent de se connecter simultanément à la même machine. Lors de mes tests, chaque machine parvenait à envoyer ses shuffles à toutes les autres machines lorsque le fichier SLAVE.py était executé individuellement, mais le shuffle échouait lorsque tous les scipts étaient executés en parallèle par le master.
+Au moment de l'envoie des shuffles entre les workers, chaque slave effectuait au départ jusqu'à 5 tentatives en cas d'échec (configurable via une variable globale). Dans ces conditions, l'étape de shuffle échouait quasi systématiquement sur le fichier de 18.3 MB lorsque le nombre de workers excédait les 20/25. Il semblait y avoir un problème lors de l'envoie des shuffles entre workers avec scp, lorsque trop de machines tentent de se connecter simultanément à la même machine. Lors de mes tests, chaque worker parvenait à envoyer ses shuffles à toutes les autres workers lorsque le fichier SLAVE.py était executé individuellement, mais le shuffle échouait lorsque tous les scipts étaient executés en parallèle par le master.
 
 \includegraphics[width=10cm]{screenshot_shuffle7.png}
 
 La solution a été de rajouter une temporisation entre chacune des tentatives d'envoi de chaque worker. Pour améliorer les performances, chaque worker tente d'envoyer ses shuffles aux autres workers et en cas d'échec récupère le code d'erreur retourné par la commande scp puis attend 200 ms avant de retenter l'envoi. Il y a une distinction faite par le programme sur le code d'erreur retourné par la commande scp. Si le code d'erreur retourné est toujours 1 (c'est l'erreur qui se produit lors du phénomène observé) le programme peut faire jusqu'à 500 tentatives successives avant d'abandonner et de retourner un code d'erreur pour notifier le master. Si le code d'erreur retourné par scp n'est pas 1 (ce qui signifie que nous avons un autre type d'erreur que celui attendu), le nombre maximal de tentatives successives est de 5. Cela permet de détecter et remonter rapidement au master les anomalies qui ne sont pas dues à ces problème de surchage des workers.
 
-Il y a un compromis à trouver sur le temps d'attente : si les tentatives ne sont pas assez espacées dans le temps, toutes les tentatives échoueront. On ne veut cependant pas attendre trop longtemps entre chaque tentative pour ne pas trop impacter la performance globale du MapReduce. La valeur de 200 ms a été trouvée de façon empirique.
+Il y a un compromis à trouver sur le temps d'attente : si les tentatives ne sont pas assez espacées dans le temps, toutes les tentatives échoueront et cela génèrait beaucoup de requêtes simultanée. On ne veut cependant pas attendre trop longtemps entre chaque tentative pour ne pas trop impacter la performance globale du MapReduce. La valeur de 200ms a été trouvée de façon empirique.
 
 On pourrait ensuite coder le master pour lancer une nouvelle tentative de shuffle sur le worker qui a échouée (relancer le script SLAVE.py sur le worker qui a échoué). On pourrait de plus en faire de même à chaque étape (map, shuffle, reduce). Ce code a été implémenté pour le shuffle comme c'est l'étape qui posait le plus de problèmes lors des tests, mais commenté pour éviter d'alourdir trop le scipt. L'idée est que si le master doit relancer une étape dans son intégralité sur un ou plusieurs worker, la performance globale du MapReduce sera lourdement impactée. Puisque le but ici est de tenter d'optimiser le code pour obtenir la meilleure performance possible, il est plus intéressant d'arrêter tout le MapReduce et de revoir le code pour optimiser l'étape qui a échouée.
 
 \section{Vérification de la loi d'Amdahl}
-La loi d'Amdahl permet de quantifier l'accéleration théorique d'un programme liée à son taux de parallélisation et le nombre de processeurs (ici le nombre de workers). Plus précisément, nous avons la formaule suivante : speedup = $\frac{1}{(1-P)+(\frac{P}{N})}$ avec P le taux de parallélisation du programme et N le nombre de processeurs.
+La loi d'Amdahl permet de quantifier l'accéleration théorique d'un programme liée à son taux de parallélisation et le nombre de processeurs (ici le nombre de workers). Plus précisément, nous avons la formule suivante : speedup = $\frac{1}{(1-P)+(\frac{P}{N})}$ avec P le taux de parallélisation du programme et N le nombre de processeurs.
 
-Dans notre cas le taux de parallélisation reste constant et le nombre de workers varie. Nous pouvons donc faire varier le nombre de worker et tracer la courbe de speedup empirique puis la comparer avec le speedup théorique. Puisqu'on ne connait pas la valeur de P, on prendra une valeur arbitraire qui collera avec nos observation.
+Dans notre cas le taux de parallélisation reste constant et le nombre de workers varie. Nous pouvons donc faire varier le nombre de worker et tracer la courbe de speedup empirique puis la comparer avec le speedup théorique. Puisqu'on ne connait pas la valeur de P, on prendra une valeur arbitraire qui collera avec nos observations.
 
 Le résultat sur le fichier de 18.3 MB est le suivant :
 
@@ -128,7 +135,7 @@ Le résultat sur le fichier de 398.8 MB est le suivant :
 
 Ici la courbe de speedup empirique semble coller avec celle théorique donnée par la loi d'Amdahl avec un paramètre P = 0.5. On constate que les temps d'attente ont moins d'influence sur les résulats finaux. La tâche à réaliser pour chaque worker étant plus conséquencte, on constate moins le problème de temps de traitement irréductible vu précédemment, du moins avec le nombre de workers testé.
 
-A titre de comparaison le compte de mots prends un peu moins d'une seconde en séquenciel sur une machine du tp pour le fichier de 18.3 MB alors que notre meilleur performance en MapReduce est de 4.2s avec 10 machines.
+A titre de comparaison le compte de mots prend un peu moins d'une seconde en séquenciel sur une machine de TP pour le fichier de 18.3 MB alors que notre meilleur performance en MapReduce est de 4.2s avec 10 machines.
 
 \includegraphics[width=5cm]{screenshot_seq1.png}
 
@@ -136,9 +143,9 @@ Sur le fichier de 398.8 MB, le MapReduce prend 28.3s, contre 23.6s obtenu avec 3
 
 \includegraphics[width=5cm]{screenshot_seq2.png}
 
-\section{Conclusion}
+\section*{Conclusion}
 
-Nous avons vu que la réalisation d'une simple tâche de comptage de mots en MapReduce nécessite la coordination et l'échange de données entre différentes machines. Cela entraine beaucoup de travaille supplémentaire et n'est justifié que dans le cas de gros volumes de données à traiter, le MapReduce ayant fait à peine mieux que le traitement en séquenciel sur le fichier de 398.8 MB. Il existe un certain nombre d'optimisations possibles comparé au schéma initial du MapReduce, notamment sur l'aggregation de petits fichiers leur écriture en un seul bloc. Il faudra dans ce cas faire attention à ne pas excéder le niveau maximum de RAM des workers. Ces optimisations ont été adaptées au comptage de mot mes doivent cependant peut être revues pour d'autres applications.
+Nous avons vu que la réalisation d'une simple tâche de comptage de mots en MapReduce nécessite la coordination et l'échange de données entre différentes machines. Cela entraine beaucoup de travaille supplémentaire et n'est justifié que dans le cas de gros volumes de données à traiter, le MapReduce ayant fait à peine mieux que le traitement en séquenciel sur le fichier de 398.8 MB. Il existe un certain nombre d'optimisations possibles comparé au schéma initial du MapReduce, notamment sur l'aggregation de petits fichiers leur écriture en un seul bloc. Il faudra dans ce cas faire attention à ne pas excéder le niveau maximum de RAM des workers. Ces optimisations ont été adaptées au comptage de mot mais doivent cependant peut-être être revues pour d'autres applications.
 
 On observe bien la loi d'Amdahl, malgré des temps de latences plus importants que ceux attendus théoriquement, liés aux temps de latence réseau.
 
